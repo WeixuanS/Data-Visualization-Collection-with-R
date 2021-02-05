@@ -1,0 +1,484 @@
+---
+title: '95-868 Homework 5'
+author: 'Weixuan Sun'
+output: 
+  html_document:
+    fig_width: 7
+    fig_height: 5
+---
+
+#### Instructions 
+
+Submit this Rmd file on canvas Don't submit additional files.
+
+Code should be clearly commented. Plots should be presentable and properly labeled. Mitigate overplotting whenever possible.
+
+#### Preliminaries
+
+We'll use the data file `hw5_data.csv`, which should be in the same directory as this markdown file (which should also be your working directory). It is a data frame of expenditures by household from the consumer expenditure survey
+
+Here are some libraries that you may need.
+```{r}
+library(ggplot2)
+library(plyr)
+library(tidyr)
+library(splines)
+library(boot)
+library(MASS)
+library(broom)
+library(tidyverse)
+library(grid)
+
+data5 = read.csv(file = 'hw5_data.csv', header = TRUE)
+```
+
+Normally, the cross validation results will be different each time, since a random sample is taken. This could make grading difficult since we may not see the same results that you see. The command `set.seed(x)`, where `x` is any number, fixes the random number generator to give the same output every time.
+
+```{r}
+set.seed(1)
+```
+
+Here are some functions you can use. You are also free to create your own functions if it makes the exercises easier. If you do so, please add comments to explain the purpose of each function.
+
+
+```{r}
+glm.cv.loop = function(data, formula.text, DF.vector, K=10) {
+  # make sure boot library is loaded
+  require(boot) 
+  cv.scores = rep(0, times = length(DF.vector))
+  for (DF in DF.vector) {
+    # get the fitted model for current value of DF
+    spline.model = glm(as.formula(formula.text), data=data)
+    # run K-fold cross validation 
+    cv = cv.glm(data=data, glmfit=spline.model, K=K)
+    # extract the cross-validation score
+    cv.scores[DF] = cv$delta[1]
+  }
+  # make the plot
+  data.out = data.frame(df = DF.vector, cv.scores = cv.scores)
+  cv.plot = ggplot(data = data.out, mapping=aes(x=df, y=cv.scores)) + 
+    geom_point() + labs(x='df', title='Cross Validation Scores')
+  # return a list containing the scores and the plot
+  return( list(scores = cv.scores, plot = cv.plot))
+}  
+```
+
+```{r}
+Find.QQ = function(.data, column.name, y) {
+  # how many quantiles are we plotting?
+  n.pts = min( length(.data[, column.name]), length(y))
+  # which quantiles are we plotting?
+  probs = seq(from = 0, to = 1, length.out = n.pts)
+  # compute these quantiles for each group
+  q1 = quantile(.data[, column.name], probs= probs)
+  q2 = quantile(y, probs=probs )
+  # return them as a data frame
+  return( data.frame(q1 = q1, q2 = q2))
+}
+```
+
+```{r}
+Pool.Residuals = function (data.augment, x, qvec = c(.05, .15, .5, .85, .95)) {
+  require(plyr)
+  require(reshape2)
+  # find the quantiles of the residuals
+  resid.quantile = quantile(x = data.augment$.resid, probs = qvec)
+  # add the quantiles of the residuals to the predicted trend
+  data.augment = mutate(data.augment, 
+                        q1 = .fitted + resid.quantile[1],
+                        q2 = .fitted + resid.quantile[2],                                      
+                        q3 = .fitted + resid.quantile[3],                                      
+                        q4 = .fitted + resid.quantile[4],              
+                        q5 = .fitted + resid.quantile[5])
+  data.melt = melt(data.augment, id.vars = x, measure.vars = c('q1', 'q2', 'q3', 'q4', 'q5'))
+  data.melt = subset(data.melt, select = c(x, 'variable', 'value'))
+  return( data.melt )
+}
+```
+
+#### Questions 
+
+**Problem 1a:**
+
+Load the data file `dataset_hw5.csv`. Look at `healthcare` as a function of `age.interviewee`. Is there anything odd about the distribution of ages? Remove the households who did not spend a positive amount on health care, or whose age is 87.
+
+```{r}
+
+# fit a linear model to healthcare as function of age.interviewee
+lm.model <- lm(formula = healthcare ~ age.interviewee, data = data5)
+# show the model
+lm.model
+
+# raw.plot = the untransformed data
+raw.plot = ggplot(data = data5, mapping=aes(x=age.interviewee, y=healthcare)) + geom_point(size=1) 
+# draw the plot with a trend line
+raw.plot + geom_smooth()
+
+# Remove the households who did not spend a positive amount on healthcare or whose age is 87
+data5.1 <- data5[which(data5$healthcare > 0.0), ]
+
+# fit a linear model to healthcare as function of age.interviewee
+lm.model <- lm(formula = healthcare ~ age.interviewee, data = data5.1)
+# show the model
+lm.model
+
+# clean.plot = the cleaned data
+clean.plot = ggplot(data = data5.1, mapping=aes(x=age.interviewee, y=healthcare)) + geom_point(size=1) 
+# draw the plot with a trend line
+clean.plot + geom_smooth()
+
+
+```
+ANS: We can see from the plot that there is a clear abrupt in the age of 75 and above and also there some outliers like the expenditures in healthcare is less than -20000. After cleaning the data,we can see most people's healthcare expenditures are aove zero and also some spend a lot more higher than the average.
+
+
+**Problem 1b:**
+
+Plot a log transform of `healthcare` against `age.interviewee`. Do you notice anything unusual about the distribution? Specifically, is there an abrupt change in the distribution of expenditures at any particular age?
+
+You should notice that around age 64 and up, there is an abrupt change; above this age, almost all of the households have a `log(healthcare)` above 5.3 or so. Let's just try to model the expenditures of those households where `age.interviewee` is 63 or less. Create this subset and call it `young`.
+
+```{r}
+
+
+# Plot log(healthcare) against age
+data5.plot <- ggplot(data = data5, mapping=aes(x = age.interviewee, y = log(healthcare))) + geom_point()
+data5.plot
+
+# Subset the dataset into age is 63 or less
+young <- data5[ which(data5$age.interviewee <= 63), ]
+
+# Plot log(healthcare) against age that is 63 or less
+young.plot <- ggplot(data = young, mapping=aes(x = age.interviewee, y = log(healthcare))) + geom_point()
+young.plot
+
+
+```
+ANS: We can see from the plot that before cleaning the data, there is a sudden abrupt in age 75 and above. Although most expenditures are around 5.0 and above. When we remove people that are older than 63, the distribution is more balanced.
+
+
+**Problem 2:**
+
+Choose a log or power transform, and use cross validation to fit a natural spline to `young`. Make a s-l plot to check if the variance of the residuals is roughly constant as a function of the predicted values. If you are not satisfied with the results of the s-l plot, choose a new transform and repeat until you are satisfied. Your code should only reflect your final choice of transform.
+
+Note: the s-l plot won't come out perfect this time. But you should try anyway and see how close you can get.
+
+```{r}
+
+# fit a natural spline with df=8 to model healthcare vs. age.interviewee
+spline.model = lm(healthcare ~ ns(age.interviewee, df=8), data = young)
+spline.model
+
+ns.matrix = with(young, ns(age.interviewee, df=8))
+ns.df = with(young, data.frame(age.interviewee = age.interviewee, spline = ns.matrix))
+ns.df = reshape2::melt(ns.df, id.vars='age.interviewee')
+ggplot(data = ns.df, mapping=aes(x = age.interviewee, y = value, color=variable)) + geom_line()
+
+# Example of overfitting
+young.plot.1 = ggplot(data = young, mapping=aes(x = age.interviewee, y = healthcare)) + 
+  geom_point() + labs(title='young dataset')
+young.plot.1
+
+# Fit 3 different spline models to young
+model.2 = lm(healthcare ~ ns(age.interviewee, df=2), data = young)
+model.4 = lm(healthcare ~ ns(age.interviewee, df=4), data = young)
+model.8 = lm(healthcare ~ ns(age.interviewee, df=8), data = young)
+
+# Predictions for `df = 8` are the closest to the observed data 
+pred.2 = augment(model.2, young)
+pred.4 = augment(model.4, young)
+pred.8 = augment(model.8, young)
+all.pred = data.frame(age.interviewee = young$age.interviewee, pred.2 = pred.2$.fitted, pred.4 = pred.4$.fitted, pred.8 = pred.8$.fitted)
+all.pred = reshape2::melt(all.pred, id.vars = 'age.interviewee')
+ggplot(data = all.pred, mapping=aes(x=age.interviewee, y=value, color=variable)) + geom_point(size=3) + geom_line(linetype=3, size=1) + geom_point(data = young, mapping=aes(x=age.interviewee, y=healthcare), color='black') + scale_color_brewer(palette = 'Set1') + labs(title = 'predictions (note: dotted line not actual spline!)', color='model', y = 'healthcare') + facet_wrap('variable')
+
+
+ggplot(data = young, mapping=aes(x=age.interviewee, y=healthcare)) + geom_point(data = data5, mapping=aes(age.interviewee, y=healthcare), color='grey') + 
+  geom_point() + 
+  geom_smooth(method='lm', formula = y ~ ns(x, df=2), se=F, color='red') +
+  geom_smooth(method='lm', formula = y ~ ns(x, df=4), se=F, color='blue') +
+  geom_smooth(method='lm', formula = y ~ ns(x, df=8), se=F, color='green') + coord_cartesian(ylim = c(10, 45)) +
+  labs(title='model predictions') + 
+  annotate(geom='text', x=6, y=40, label = 'red: df=2', color='red' ) +
+  annotate(geom='text', x=6, y=37, label = 'blue: df=4', color='blue' ) +
+  annotate(geom='text', x=6, y=34, label = 'green: df=8', color='green' ) 
+
+
+
+```
+```{r}
+# Implementing cross-validation in R
+
+# fit the trend with df = 4 (using glm)
+spline.model = glm(healthcare~ns(age.interviewee, df=4), data=young)
+# run fourfold cross validation 
+cv = cv.glm(data=young, glmfit=spline.model, K=10)
+# extract the cross-validation score
+score = cv$delta[1]
+# what is the score? (low scores are better)
+score
+```
+
+```{r}
+# this command sets the random number generator so that the output is the same each time I run it:
+set.seed(1)
+```
+
+```{r}
+# cv.score will store all of our scores. We will initialize it to zero.
+cv.scores = rep(0, times=10)
+# vary DF from 1 to 10
+for (DF in 1:10) {
+  # fit the spline fit with df=DF, using glm
+  spline.model = glm(healthcare~ns(age.interviewee, df=DF), data=young)
+  # run fourfold cross validation 
+  cv = cv.glm(data=young, glmfit=spline.model, K=10)
+  # extract the cross-validation score
+  cv.scores[DF] = cv$delta[1]
+}
+```
+
+```{r}
+
+# plot the cross validation score vs DF:
+ggplot(mapping=aes(x=1:10, y=cv.scores)) + geom_point() + 
+  labs(x='df', title='Cross Validation Scores')
+
+```
+We can see from plots that when df=8, the model is more fittable.
+
+**Problem 3:**
+
+Divide `age.interviewee` into groups, and use quantile plots or QQ plots to see if the residuals in each group look identically distributed. Then do the same, but group the data according to their predicted expenditures under the spline instead of by `age.interviewee`. Examine the plots to see if the residuals look identically distributed in each group.
+
+```{r}
+# Divide age.interviewee into groups
+
+# restrict to positive healthcare expenditures
+exp.subset = subset(young, subset = healthcare > 0 & !is.na(income.rank))
+# take log transform, find group means and residuals
+exp.subset = mutate(exp.subset, log.healthcare = log(healthcare))
+# we'll just group by age.interviewee to keep things simple
+exp.subset = ddply(exp.subset, "age.interviewee", mutate, 
+                   avg.log.healthcare = mean(log.healthcare), 
+                   residual.log.healthcare = log.healthcare - avg.log.healthcare)
+
+
+# The group averages were:
+ddply(exp.subset, "age.interviewee", summarise, avg.log.healthcare = mean(log.healthcare))
+
+# plot quantiles of residuals
+ggplot(data = exp.subset, mapping = aes(sample = residual.log.healthcare, color = age.interviewee)) + stat_qq(distribution = 'qunif') + labs(x = 'Quantiles', y = 'Residual Log Expenditures', title = 'Quantile Plot, Residual Log Apparel Expenditures \n (Positive Costs Only)')
+
+
+
+
+```
+
+**Problem 4:**
+
+Estimate the distribution of the residuals and use this estimate, plus the fitted trend, to estimate the probability distribution of `healthcare` as a function of `age.interviewee`. Create a plot showing some of the quantiles of this distribution as a function of `age.interviewee`. 
+
+(In other words, make a quantile regression plot) 
+
+```{r}
+# If the group averages are:
+ddply(exp.subset, "age.interviewee", summarise, avg.log.healthcare = mean(log.healthcare))
+
+# and if the quantiles of the residuals are
+q = quantile(exp.subset$residual.log.healthcare, prob = c(.15, .5, .85, .95, .99))
+q
+
+# IF the residuals are identically distributed, then we have a pretty good idea of their distribution:
+model = lm(log.healthcare ~ ns(age.interviewee, df = 11), data = exp.subset)
+exp.subset = mutate(exp.subset, 
+                    pred = predict(model), 
+                    resid = resid(model))
+
+plot.trend = ggplot(data = exp.subset, 
+                    mapping=aes(x = age.interviewee, y = log.healthcare)) + 
+  geom_smooth(method = 'lm', formula = y~ns(x, df=11)) + 
+  labs(title = 'Trend line, log healthcare vs age.interviewee')
+
+plot.resid = ggplot(data = exp.subset, mapping=aes(sample = resid)) + 
+  stat_qq(distribution = qunif) + 
+  labs(title = 'Quantile Plot, Residuals', x = 'Quantiles', y = 'Residual')
+  
+# can combine multiple plots and draw with weird syntax
+two.plots = cbind(ggplotGrob(plot.trend), ggplotGrob(plot.resid), size = 'last')
+grid.newpage()
+grid.draw(two.plots)
+
+# Making a quantile regression plot
+q = quantile(exp.subset$resid, prob = c(.15, .5, .85, .95, .99))
+q
+
+# Then the quantiles of `log.healthcare` are given by `trend + q`:
+exp.augment = mutate(exp.subset, 
+                     q1 = pred + q[1],                    
+                     q2 = pred + q[2],                                  
+                     q3 = pred + q[3],                                  
+                     q4 = pred + q[4],             
+                     q5 = pred + q[5])
+# combine all of the quantiles into one column for easier plotting:
+exp.plot = reshape2::melt(exp.augment, id.vars= c('age.interviewee'), measure.vars = c('q1', 'q2', 'q3', 'q4', 'q5'))
+
+ggplot(data = exp.plot, mapping=aes(x = age.interviewee, y = value, color = variable)) + geom_line() + scale_color_brewer(palette = 'Set1', limits = c('q5', 'q4', 'q3', 'q2', 'q1'), labels = c('99%', '95%', '85%', '50%', '15%')) + 
+  labs(x = 'age.interviewee', y='log.healthcare', color = 'Quantiles')
+
+# And the quantiles of `healthcare` are given by `exp(trend + q)
+ggplot(data = exp.plot, mapping=aes(x = age.interviewee, y = exp(value), color = variable)) + geom_line() + scale_color_brewer(palette = 'Set1', limits = c('q5', 'q4', 'q3', 'q2', 'q1'), labels = c('99%', '95%', '85%', '50%', '15%')) + labs(x = 'age.interviewee', y='healthcare', color = 'Quantiles')
+
+ggplot(data = exp.plot, mapping=aes(x = age.interviewee, y = exp(value), color = variable)) + geom_point(data = exp.subset, mapping=aes(x = age.interviewee, y = healthcare), color = 'black', size = 1) + geom_line() + scale_color_brewer(palette = 'Set1', limits = c('q5', 'q4', 'q3', 'q2', 'q1'), labels = c('99%', '95%', '85%', '50%', '15%')) + labs(x = 'age.interviewee', y='healthcare', color = 'Quantiles')
+
+```
+Q: Were the assumptions of the model satisfied? Based on your checks of the assumptions, how might the predictions deviate from reality?
+
+ANS: We can see from the plots that the assumptions of the model are somewhat satisfied.99% quantile line is in line with outliers of healthcare. Most interviewees' healthcare expenditures are around 0 to 2500. The predictions are not that deviated from reality.
+
+
+**Problem 2 and Problem 3: S-L plot and age QQ plot**
+```{r}
+
+# s-l plot: x = .fitted, y = sqrt( abs(.resid) )
+ggplot(data = exp.subset, mapping=aes(x = pred, y = sqrt(abs(resid)))) + 
+  geom_point(size = 1) + geom_smooth()
+
+ggplot(data = exp.subset, mapping=aes(x = age.interviewee, y = log.healthcare)) + 
+  geom_point(size = 1) + 
+  geom_smooth(method = 'lm', formula = y~ns(x, df = 11)) + 
+  labs(title = 'log transform')
+
+# What if we didn't use a log transform?
+ggplot(data = exp.subset, mapping=aes(x = age.interviewee, y = healthcare)) + 
+  geom_point(size = 1) + 
+  geom_smooth(method = 'lm', formula = y~ns(x, df = 11)) + 
+  labs(title='raw data')
+
+model = lm(healthcare ~ ns(age.interviewee, df = 11), data = exp.subset)
+exp.subset = mutate(exp.subset, pred = predict(model), resid = resid(model))
+ggplot(data = exp.subset, mapping=aes(x = pred, y = sqrt(abs(resid)))) + geom_point(size = 1) + geom_smooth() + labs(title ='S-L plot, raw data')
+
+# Let's try the power function
+# power of 1/7 was chosen by trial and error
+exp.subset = mutate(exp.subset, pow.healthcare = healthcare^(1/7))
+
+ggplot(data = exp.subset, mapping=aes(x = age.interviewee, y = pow.healthcare)) + geom_point(size = 1) + geom_smooth(method = 'lm', formula = y~ns(x, df=9))
+
+model = lm(pow.healthcare ~ ns(age.interviewee, df = 9), data = exp.subset)
+exp.subset = mutate(exp.subset, pred = predict(model), resid = resid(model), age.cat = cut_number(age.interviewee, n = 10))
+ggplot(data = exp.subset, mapping=aes(x = pred, y = sqrt(abs(resid)))) + geom_point(size = 1) + geom_smooth() + labs(title ='S-L plot, apparel^(1/7)')
+
+
+Find.QQ = function(data, col.name, pooled.data) {
+  n.pts = min( length(data[ ,col.name]), length(pooled.data))
+  probs = seq(from = 0, to = 1, length.out = n.pts)
+  q1 = quantile(data[ ,col.name], probs= probs)
+  q2 = quantile(pooled.data, probs=probs )
+  return( data.frame(group.data = q1, pooled.data = q2, quantile = probs) )
+}
+
+
+QQ.df = ddply(exp.subset, 'age.cat', Find.QQ, col.name = "resid", pooled.data = exp.subset$resid)
+
+ggplot(data = QQ.df, mapping=aes(x = pooled.data, y = group.data)) + geom_point() + geom_abline() + facet_wrap('age.cat', nrow = 2) + labs(title='QQ Plot, grouped vs pooled residuals')
+
+
+```
+ANS: We can see from S-L plot that after log and power transformation, it is interesting that in older ages and larger quantiles, there are more people spending on healthcare.Also, based on the QQ plot,interviewees i older ages are more likely to spend more on healthcare.
+
+**Problem 5:**
+
+Q: In part 1a, we removed households who spent exactly zero. Suppose we had included the households who spent zero, instead of removing them. Is there any log or power transform that will make the residuals identically distributed? 
+
+You may show a plot if it helps to explain your answer.
+
+```{r}
+
+# If we do not remove households who spent zero
+
+glm.cv.loop = function(data, formula.text, DF.vector, K=10) {
+  # make sure boot library is loaded
+  require(boot) 
+  cv.scores = rep(0, times = length(DF.vector))
+  for (DF in DF.vector) {
+    # get the fitted model for current value of DF
+    spline.model = glm(as.formula(formula.text), data=data)
+    # run K-fold cross validation 
+    cv = cv.glm(data=data, glmfit=spline.model, K=K)
+    # extract the cross-validation score
+    cv.scores[DF] = cv$delta[1]
+  }
+  # make the plot
+  data.out = data.frame(df = DF.vector, cv.scores = cv.scores)
+  cv.plot = ggplot(data = data.out, mapping=aes(x=df, y=cv.scores)) + 
+    geom_point() + 
+    labs(x='df', title='Cross Validation Scores')
+  # return a list containing the scores and the plot
+  return( list(scores = cv.scores, plot = cv.plot))
+}  
+
+# do cross validation with natural splines and DF from 1:15 (note K=4 by default)
+out = glm.cv.loop(data=exp.subset, 
+                  formula.text = "log.healthcare ~ ns(income.rank, df=DF)", 
+                  DF.vector = 1:30)
+# what was the plot?
+out$plot
+
+Find.QQ = function(.data, column.name, y) {
+  # how many quantiles are we plotting?
+  n.pts = min( length(.data[, column.name]), length(y))
+  # which quantiles are we plotting?
+  probs = seq(from = 0, to = 1, length.out = n.pts)
+  # compute these quantiles for each group
+  q1 = quantile(.data[, column.name], probs= probs)
+  q2 = quantile(y, probs=probs )
+  # return them as a data frame
+  return( data.frame(q1 = q1, q2 = q2))
+}
+
+
+Pool.Residuals = function (data.augment, x, qvec = c(.05, .15, .5, .85, .95)) {
+  require(plyr)
+  require(tidyr)
+  # find the quantiles of the residuals
+  resid.quantile = quantile(x = data.augment$.resid, probs = qvec)
+  # add the quantiles of the residuals to the predicted trend
+  data.augment = mutate(data.augment, 
+                        q1 = .fitted + resid.quantile[1],
+                        q2 = .fitted + resid.quantile[2],                                      
+                        q3 = .fitted + resid.quantile[3],                                      
+                        q4 = .fitted + resid.quantile[4],              
+                        q5 = .fitted + resid.quantile[5])
+  data.melt = gather(data.augment, value = 'value', key = 'variable', 
+                            q1, q2, q3, q4, q5)
+  data.melt = subset(data.melt, select = c(x, 'variable', 'value'))
+  return( data.melt )
+}
+
+# fit a natural spline with df=12 to log healthcare
+log.model = lm(log.healthcare~ns(age.interviewee, df=12), data = exp.subset)
+# get the predictions and residuals
+log.augment = augment(x = log.model, data = exp.subset)
+# call Pool.Residuals to build model of transformed data
+log.quantiles = Pool.Residuals(data.augment = log.augment, x='age.interviewee')
+
+
+# plot the transformed data
+ggplot(data = log.quantiles, 
+       mapping=aes(x=age.interviewee, y=exp(value), color=variable)) + 
+  geom_point(data = log.augment, 
+             mapping=aes(x=age.interviewee, y=apparel), color='black', size=1) + 
+  geom_line(size=1) + 
+  scale_color_brewer(palette = 'Set1', 
+                     limits = c('q5', 'q4', 'q3', 'q2', 'q1'), 
+                     labels = c('95%', '85%', '50%', '15%', '5%')) + 
+  labs(x = 'age.interviewee', y='Healthcare', 
+       color = 'Estimated \nQuantiles')
+
+
+```
+
+ANS: We can see from the plot that the distribution becomes more concentrated and there are less outliers. Most healthcare spendings are between 0 to 2500.
+
+

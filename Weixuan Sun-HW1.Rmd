@@ -1,0 +1,182 @@
+---
+title: '95868 Homework 1'
+author: "Weixuan Sun"
+output: 
+  html_document:
+    fig_width: 8
+    fig_height: 10
+---
+
+#### Instructions 
+
+Submit this Rmd file on blackboard. Don't submit additional files. Don't forget to put your name above!!
+
+Fill in the missing code chunks to answer the following questions. You should use a reasonable coding style and comment your code so that it is clear what you are doing. As a rough rule of thumb, expect to add multiple comments to each missing code chunk.
+
+If the question asks for a numerical answer, such as "what fraction of households in the data set satisfy condition X," do not hard code the value from the computation. If the data set changes, your answer should  update automatically. 
+
+(If the question asks for a short sentence description, you can type this into the file directly)
+
+Here are two recommended ways that you can report your answer:
+
+**Example Question 1:** In the `cars` data set, what is the average value of the `speed` column?
+
+```{r}
+# take average of mpg$speed, save as variable
+avg.speed = mean(cars$speed)
+avg.speed
+```
+
+**Answer:** The average value was `r avg.speed`
+
+**Example Question 1:** In the `ChickWeight` dataset, what was the average weight of the chickens grouped by each diet type?
+
+```{r}
+library(plyr)
+library(knitr) # for the kable() function, which prints data frames as tables:
+
+# group the chickens by diet and take average weight
+avg.weights = ddply(ChickWeight, "Diet", summarize, avg.weight = mean(weight))
+# display the data frame as an easy-to-read table, with 3 significant digits
+kable(avg.weights, digits = 3, col.names = c('Diet', 'Average Weight'))
+
+# or you can display more primitively if the data frame is small
+avg.weights
+```
+
+
+#### Questions 
+
+**Note:** We will assume that the data file `hw1_data.csv` is in your working directory.
+
+**Problem 1:** 
+
+Load the CSV file `hw1_data.csv` into memory, using the command `read.file()` or `read.csv()` as described in lecture. Save the result as a variable called `expenditure.small`. 
+
+Hint: You may want to look at the CSV file using another program such as excel to see if the first row is a header. 
+
+```{r}
+# Load the library
+library(tidyverse)
+library(plyr)
+library(knitr)
+
+```
+
+```{r}
+# Fill in, with comments added:
+
+# Import data and rename it:
+
+expenditure.small <- read.csv("hw1_data.csv",header=T)
+  
+```
+
+**Problem 2:**
+
+a) How many records are in the data set? 
+```{r}
+
+#view the dataframe
+
+records <- dim(expenditure.small)
+records
+
+```
+**ANSWER: There are 4000 records in the dataset.**
+
+
+b) The column `home.type` describes the type of home belonging to each respondent. What are the different levels that this column is allowed to take?
+```{r}
+# We don't need this code section -- the answers are all inline (see below):
+
+levels(expenditure.small$home.type)
+
+```
+
+**ANSWER: There are 11 different levels: "3-plex or 4-plex","apartment or flat","dormitory","duplex","end row or end townhouse","garden","high-rise","mobile home or trailer","other","row or townhouse inner unit","single family detached" ** 
+
+**Problem 3:**
+
+What fraction of records in the data set belong to each `home.type`? In your answer, order the home types by how many records they have (largest first).
+
+```{r}
+# Fill in, with comments added:
+
+home.type.fraction<-table(expenditure.small$home.type)
+table.fraction <- prop.table(home.type.fraction)
+table.fraction
+
+sort(table.fraction, decreasing = TRUE)
+
+```
+**ANSWER: See the table of fraction above**
+
+**Problem 4:**
+
+Change the `expenditure` data frame so that `home.type` column has only 3 coded types: 
+
+1. single family detached homes
+2. apartments or flats
+3. other (everything else)
+
+Print the number of records in each `home.type` as a table. 
+
+```{r}
+
+# Fill in, with comments added:
+# Map the values into different levels
+
+expenditure.small$home.type = mapvalues(expenditure.small$home.type,
+                          from = c("single family detached", "apartment or flat", "mobile home or trailer","row or townhouse inner unit", "duplex", "high-rise","3-plex or 4-plex", "end row or end townhouse","garden","dormitory","other"),
+                          to = c("single family detached homes", "apartments or flats", "other", "other", "other", "other", "other", "other", "other", "other","other") )
+expenditure.small
+
+
+# Count the number of records in each home.type
+
+counts <- ddply(expenditure.small, c("home.type"), summarize, 
+               n.households = length(housing))
+counts 
+
+
+
+```
+**ANSWER: There are 2553 in single family detached homes, 872 in other, 575 in apartments or flats.**
+
+
+**Problem 5a:**
+
+Create a subset of the `expenditure` data set consisting of just those households whose income rank is above 95%. We will call these the "rich" households. 
+
+```{r}
+# Fill in, with comments added:
+
+rich <- subset(expenditure.small, income.rank >= 0.95)
+
+```
+
+(you don't have to print the result, we'll use it in the next part)
+
+**Problem 5b:**
+
+What fraction of the households in the `expenditure` data set live in the Midwest, Northeast, South, West, and NA regions of the US? In comparison, how does your answer change if you look only at the subset of the data consisting of those households whose income rank is above 95% (from problem 5a)? Give both results, and then describe in words how they are different.
+
+```{r}
+# Fill in, with comments added:
+
+# The fraction in the original dataset expenditure.small
+region.fraction<-table(expenditure.small$region)
+table.fraction.1 <- prop.table(region.fraction)
+table.fraction.1
+
+# The fraction in the subset dataset rich
+region.fraction<-table(rich$region)
+table.fraction.2 <- prop.table(region.fraction)
+table.fraction.2
+
+```
+
+How are the distributions different?
+
+**ANSWER: 1.The general distribution of households in both datasets are similar. 2.We can see that there are less rich people in Midwest region, rich people are largely located in South Area.**

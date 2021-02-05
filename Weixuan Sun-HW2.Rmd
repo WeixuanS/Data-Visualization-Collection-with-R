@@ -1,0 +1,133 @@
+---
+title: '95868 Homework 2'
+author: "Weixuan Sun"
+output: 
+  html_document:
+    fig_width: 8
+    fig_height: 10
+---
+
+#### Instructions 
+
+Submit this Rmd file on blackboard. Don't submit additional files. Don't forget to put your name above!!
+
+Fill in the missing code chunks to answer the following questions. You should use a reasonable coding style and comment your code so that it is clear what you are doing. As a rough rule of thumb, expect to add multiple comments to each missing code chunk.
+
+#### Questions 
+
+```{r}
+
+# load library
+library(plyr)
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+
+```
+
+We'll use the data file `hw2_data.rda`, which should be in the same directory as this markdown file (which should also be your working directory)
+```{r}
+# load hw1_data2.rda from the working directory
+load('hw2_data.rda')
+```
+
+Unlike a CSV file, which only contains one data frame, an `.rda` file contains multiple R variables, and can only be opened by R. You should have the following data frames, all taken from the Consumer Expenditure Survey:
+
+1. `expenditure`: A data frame of expenditure amounts by category for 4000 households
+2. `household`: A data frame of household and demographic information (for the same 4000 households).
+3. `income`: A data frame of income and job information (for the same 4000 households)
+
+The column names for `expenditure`, `household`, and `income` are hard to decipher. So there are 3 more data frames, with explanations for the column names.
+
+4. `expenditure.key`: Description of each column in `expenditure`
+5. `household.key`: Description of each column in `household`
+6. `income.key`: Description of each column in `income`
+
+Finally, there are two more data frames:
+
+7. `item.purchases`: Each row corresponds to a specific itemized purchase made by the households. The household ID, the cost, and a `ucc` code giving a description of the purchase is included.
+8. `item.key`: Descriptions of the different `ucc` codes
+
+Note that in `expenditure.key`, several of the expenditure categories have numbers, giving the "level" of the category. For example `food (1)` can be divided into `food at home (2)` and `food away from home (2)`. The latter subcategory can be further divided into `food excluding meals as pay (3)` and `meals as pay (3)`.
+
+**Problem 1:** 
+
+Make a dot chart showing the 30 most common itemized purchases, and how often they were reported in the data frame `item.purchases`. You should use the actual category descriptions in your chart, not the UCC codes.
+
+```{r, fig.height = 7, fig.width = 5}
+# Fill in, with comments added:
+
+# Merge item.purchases and item.key into one dataframe and add description to it
+item.combined <- merge(item.purchases, item.key, by = "ucc")
+
+# Count the number of each category within description
+counts <- ddply(item.combined, c("descr"), summarize, 
+               n.descr = length(newid))
+
+# Reorder the factor variable description so that the graph is in order
+counts$descr <- with(counts, reorder(descr, n.descr, mean))
+
+# Also, order the rows in a descendig order to match the top 30 reocrds
+counts <- counts[order(-counts$n.descr),]
+
+# get the top 30 records that have most frequent descr
+counts.top <- counts[1:30,]
+
+#Plot x as count and y as catagories
+ggplot(data = counts.top, mapping = aes(x = n.descr, y= descr)) + geom_point() + labs(x="Count", y= "", title = "Most Commonly Reported Purchases")
+
+```
+
+
+
+**Problem 2a:**
+
+Make the same dot chart as before, but group the data into 10 equally sized groups according to the age of the reference person. For each age group, show the same 30 categories as you did in problem 1. 
+
+Use `facet_wrap()` or `facet_grid()` to show your results in 10 charts, one per age group. 
+
+```{r}
+# Fill in, with comments added:
+
+# Merge item.purchases and household into one dataframe
+item.combine.1 <- merge(item.purchases, household, by = "newid")
+
+# Add description to item.combined.1 dataframe
+item.combine.2 <- merge(item.combine.1, item.key, by = "ucc")
+
+# Group the data into 10 equally sized groups according to the age of the reference person
+item.combine.2 <- mutate(item.combine.2, age.10 = cut_number(age_ref, n = 10))
+
+# Just keep top 30 records
+item.combine.2 <- subset(item.combine.2, descr == counts.top$descr)
+
+# Count the number of each age category 
+counts.1 <- ddply(item.combine.2, c("descr", "age.10"), summarize, 
+               n.descr = length(newid))
+
+# Reorder the factor variable descr so that the graph is in order
+counts.1$descr <- with(counts.1, reorder(descr, n.descr, mean))
+
+# Use facet_wrap to plot the data
+ggplot(data = counts.1, mapping = aes(x = n.descr, y = descr)) + geom_point() + facet_wrap("age.10", ncol = 5) + labs(x="Count", y= "", title = "Most Commonly Reported Purchases")
+
+```
+
+**Problem 2b**
+
+One problem with the plot of Problem 2a is that it's really hard compare counts across facets. For example, try to see which age purchased the most gasoline.
+
+Redo the previous plot, but add some kind of reference dots or reference lines to the background of each facet to fix this problem.
+
+```{r}
+# Fill in, with comments added:
+
+counts.1.no.facet = subset(counts.1, select = c('n.descr', 'descr'))
+
+ggplot(data = counts.1, mapping = aes(x = n.descr, y = descr)) + geom_point(data = counts.1.no.facet, color='grey', size = 1) + facet_wrap("age.10", ncol = 5) + labs(x="Count", y= "", title = "Most Commonly Reported Purchases") + geom_point()
+
+```
+
+How would you describe the difference between the youngest group and the oldest group in this plot?
+
+ANS: We can see that for the youngest group, people are likely to spend more money on food/breverages, regular shopping, gasoline and dinning. For the oldest group, other than large spending on food/breverages, they also spend more on medicare payments, electricity and residential telephones etc.

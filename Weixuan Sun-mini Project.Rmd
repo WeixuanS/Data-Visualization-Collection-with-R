@@ -1,0 +1,504 @@
+---
+title: '95-868 Mini project' 
+author: 'Weixuan Sun'
+output: 
+  html_document:
+    fig_width: 7
+    fig_height: 5
+---
+
+#### Instructions 
+
+Submit this Rmd file on canvas Don't submit additional files.
+
+Code should be clearly commented. Plots should be presentable and properly labeled. Mitigate overplotting whenever possible.
+
+Don't forget to add your name above! It's greatly helpful for the grader.
+
+#### Preliminaries
+
+We'll use the data file `project_data.rda`, which should be in the same directory as this markdown file (which should also be your working directory). It contains 2 data frames: 
+
+1. `crime.subset`: a data set of crimes committed in Houston 2010. This is taken from lecture 6. 
+2. `movie.data`: Contains the release year, title, genre, budget, and gross earnings for 4998 movies. This data set was constructed by combining financial information listed at `http://www.the-numbers.com/movie/budgets/all` with IMDB genre information from `ftp://ftp.fu-berlin.de/pub/misc/movies/database/genres.list.gz`.
+
+Additionally, there is one more data set in the file `movie_genre_data.rda`, which you may optionally use for part 4:
+
+3. `movie.genre.data`: Similar to `movie.data`, but contains genre and release year information for the movies as well. Note that if a movie belongs to multiple genres, then it is listed multiple times in the data set.
+
+
+```{r}
+load('project_data.rda')
+library(ggplot2)
+library(plyr)
+library(reshape2)
+library(splines)
+library(boot)
+library(broom)
+library(knitr)
+library(tidyverse)
+```
+
+#### Part 1: Finding Outliers in Crime
+
+In Lecture 6, we counted the number of crimes occuring each week in each block, and we looked for counts which were abnormally high. To do this, we computed p-values under the hypothesis that the number of crimes was poisson distributed for each block and each week, where the poisson parameter lambda varied by block (and equaled the average rate for that block.)
+
+Here we will repeat this exercise, but restrict to certain types of crimes. After that, we will look for specific addresses (instead of entire city blocks) and days (instead of weeks) which had unusual crime counts.
+
+**Question 1a.** Count the number of `auto theft` crimes that occur in each block, each week. For each block, compute the average number of auto theft crimes per week. Construct a table showing the 5 block-weeks with the highest number of auto thefts, along with average number occuring per week at each block
+
+Hint 1: to get the average number of crimes per week, divide the total number of crimes by the number of weeks in the data set, which is 35. (The way we did this in the notes might not give the correct answer -- you might want to think about why.)
+
+Hint 2: your table should have 4 columns: the block, the week, the number of auto thefts that block-week, and the average number of auto thefts per week for that block.
+
+
+```{r}
+
+# subset the dataframe into crime = auto theft
+auto.theft <- crime.subset[ which(crime.subset$offense == 'auto theft'),] 
+
+# Count the number of `auto theft` crimes that occur in each block, each week
+count.block <- ddply(auto.theft, c('block', 'week'), summarise, count = length(block))
+
+# Average by week
+sort.block <- ddply(count.block, 'block', mutate, 'Average/Week' = sum(count)/35)
+
+# sort the data by the number of auto theft
+sort.block <- sort.block[order(-count.block$count),] 
+
+# Construct a table showing the 5 block-weeks with the highest number of auto thefts, along with average number occuring per week at each block
+kable(sort.block[1:5, c('block', 'week', 'count', 'Average/Week')], digits = 3)
+
+
+```
+
+**Question 1b.** For each block-week, compute a p-value for its auto theft count. For the null hypothesis required by our p-values, we will assume that the number of auto thefts in each block-week is a Poisson random variable, with expectation (the parameter lambda) equal to its weekly average computed in Question 1a. (This is the same as in the lecture.) Label each block-week as **anomalous** if its p-value is lower than a Bonferoni-corrected fast detection rate of 5%. How many anomalous block-weeks did you find? For the anomalous block-weeks (if there are any), did the crimes tend to occur at the same address? 
+
+
+```{r}
+
+# use a for loop to compute poisson p-values for each block-week
+pval = 0
+for (i in 1:length(sort.block$block)){
+  pval[i] = poisson.test(sort.block$count[i], r=sort.block$'Average/Week'[i], alternative= 'greater')$p.value
+}
+
+# replace the old pval column in block with this one
+sort.block$pval = pval
+
+# Bonferoni-corrected fast detection rate of 5%
+number <- ifelse(sort.block$pval < 0.05, "**anomalous**",sort.block$block)
+
+
+```
+
+**ANSWER:** (How many anomalous block-weeks did you find? For the anomalous block-weeks, did the crimes tend to occur at the same address?)
+Yes some crimes occurred at the same address
+
+
+**Question 1c.** Find the daily counts of auto thefts occuring at each unique address. For each address in your data set, also compute the average number of auto thefts occuring per day. Construct a table showing the 5 address-dates with the highest number of auto thefts, along with the average number occuring per day at those addresses:  
+
+(This is analogous to Question 1a, except that you are grouping by address and date, instead of block and week. For the average number of auto thefts per day, you will want to divide the total number of auto thefts by 264, the number of days in the data set)
+
+```{r}
+
+
+# Count the number of `auto theft` crimes that occur in each address, each day
+count.address <- ddply(auto.theft, c('address', 'date'), summarise, count = length(address))
+
+# Average by date
+sort.address <- ddply(count.address, 'address', mutate, 'Address/Date' = sum(count)/264)
+
+# sort the data by the number of auto theft
+sort.address <- sort.address[order(-count.address$count),] 
+
+# Construct a table showing the 5 address-dates with the highest number of auto thefts, along with average number occuring per date at each address
+kable(sort.address[1:5, c('address', 'date', 'count', 'Address/Date')], digits = 3)
+
+```
+
+**Question 1d.** For each address-date, compute a p-value for its auto theft count, where the null hypothesis is that the number of auto thefts is a Poisson random variable, with expectation (the parameter lambda) equal to the daily average that you computed in question 1c. (Again, this is the same as in the lecture) Label each address-date as **anomalous** if its p-value is smaller than a Bonferoni-corrected false detection rate of 5%. How many address-dates were anomalous? For the anomalous address-dates, how many auto thefts occurred? What was the `location` for these anomalous addresses? 
+
+(Note: `location` is a column in the original `crime.subset` data frame)
+
+```{r}
+
+# use a for loop to compute poisson p-values for each block-week
+pval = 0
+for (i in 1:length(sort.address$address)){
+  pval[i] = poisson.test(sort.address$count[i], r=sort.address$'Address/Date'[i], alternative= 'greater')$p.value
+}
+
+# replace the old pval column in block with this one
+sort.address$pval <- pval
+
+# Bonferoni-corrected fast detection rate of 5%
+number <- ifelse(sort.address$pval < 0.05, "**anomalous**",sort.address$address)
+
+
+```
+
+
+**ANSWER:** (How many address-dates were anomalous? For the anomalous address-dates, how many auto thefts occurred? What was the `location` for these anomalous addresses?)
+
+
+
+**Question 1e.** The highest number of auto thefts occuring at any address in a single day was 3. This happened on 3 separate occurrences: `2550 broadway st` on `4/16`, `3850 norfolk` on `6/13/2010`, and `2650 south lp w` on `3/23`. Were all 3 occurences included as anomalous in your previous analysis? If so, why do you think were they included? If not, why do you think some were included, but others not?
+
+**ANSWER:** 
+Yes, they are included as anomalous in my previous analysis. I think these three places maybe large parking areas and there are many cars. Therefore it is common to have auto thefts.
+
+
+#### Part 2: Modeling Movie Revenues as a Function of Production Budget
+
+The `movie.data` data set has the following columns for 4337 movies
+
+1. `Release.Date`: When was the movie released
+2. `Movie`: The title of the move
+3. `Production.Budget`: The amount of money budgeted for the production of the movie
+4. `Domestic.Gross`: The total revenue earned within the USA by the movie
+
+We are going to construct a Quantile Regression to model the relationship between `Production.Budget` and `Domestic.Gross`. For this task, we have already written all of the code for you. However, our method is going to run into problems -- your task will be to recognize these problems as they arise. 
+
+```{r, echo = F}
+glm.cv.loop = function(data, formula.text, DF.vector, K=10) {
+  # make sure boot library is loaded
+  require(boot) 
+  cv.scores = rep(0, times = length(DF.vector))
+  for (DF in DF.vector) {
+    # get the fitted model for current value of DF
+    spline.model = glm(as.formula(formula.text), data=data)
+    # run K-fold cross validation 
+    cv = cv.glm(data=data, glmfit=spline.model, K=K)
+    # extract the cross-validation score
+    cv.scores[DF] = cv$delta[1]
+  }
+  # make the plot
+  data.out = data.frame(df = DF.vector, cv.scores = cv.scores)
+  cv.plot = ggplot(data = data.out, mapping=aes(x=df, y=cv.scores)) + 
+    geom_point() + 
+    labs(x='df', title='Cross Validation Scores')
+  # return a list containing the scores and the plot
+  return( list(scores = cv.scores, plot = cv.plot))
+}  
+
+# note: this function assumes 
+#  1. predictions are in column ".fitted"
+#  2. residuals are in column ".resid"
+# x is the name of column (in quotes) in data.augment that is the x-axis 
+# in your quantile regression
+Pool.Residuals = function (data.augment, x, qvec = c(.05, .15, .5, .85, .95)) {
+  require(plyr)
+  require(reshape2)
+  # find the quantiles of the residuals
+  resid.quantile = quantile(x = data.augment$.resid, probs = qvec)
+  # add the quantiles of the residuals to the predicted trend
+  data.augment = mutate(data.augment, 
+                        q1 = .fitted + resid.quantile[1],
+                        q2 = .fitted + resid.quantile[2],                                      
+                        q3 = .fitted + resid.quantile[3],                                      
+                        q4 = .fitted + resid.quantile[4],              
+                        q5 = .fitted + resid.quantile[5])
+  data.melt = melt(data.augment, id.vars = x, measure.vars = c('q1', 'q2', 'q3', 'q4', 'q5'))
+  data.melt = subset(data.melt, select = c(x, 'variable', 'value'))
+  return( data.melt )
+}
+
+```
+
+**Question 2a.** Below are 3 plots, showing the Domestic Gross Revenue as a function of the Production Budget for each movie, under (1) no transform, (2) a log transform, and (3) a power transform taking 4th roots. For the quantile regression, we decided to try the power transform first -- why might we have done this? What was not-so-good about the plots with no transform and with the log transform?
+
+```{r, echo = F}
+# compute the log and power transform of Budget and Gross Revenue
+pow.val = 1/4
+movie.data = mutate(movie.data,
+                       budget.pow = Production.Budget^(pow.val),
+                       gross.pow = Domestic.Gross^(pow.val),
+                       budget.log = log(Production.Budget),
+                       gross.log = log(Domestic.Gross))
+
+# no transform
+ggplot(data = movie.data, mapping = aes(x = Production.Budget, y = Domestic.Gross)) + 
+  geom_point() +
+  labs(x = 'Budget', y = 'Revenue', title = 'Budget vs Revenue')
+
+# log transform
+ggplot(data = movie.data, mapping = aes(x = budget.log, y = gross.log)) +
+  geom_point() +
+  labs(x = 'log(Budget)', y = 'log(Revenue)', title = 'log(Budget) vs log(Revenue)')
+
+# power transform
+ggplot(data = movie.data, mapping = aes(x = budget.pow, y = gross.pow)) +
+  geom_point() +
+  labs(x = 'Budget^(1/4)', y = 'Revenue^(1/4)', title = 'Budget vs Revenue, with power transformation')
+
+```
+
+
+**ANSWER:** (why was the power transform better than the others?)
+We can compare three plots that if we do not use log or power transformation, the parameters can be very extreme(like plot 1). After using log and power transformation, the parameters are not that extreme and plots are easier for us to read and compare.Also, plots without log or power transformation are harder for us to see the exact distribution of the data.
+
+
+
+**Question 2b.** Following lecture 10, we try to construct a quantile regression plot for movie revenues as a function of their production budget. We first fit a spline and compute the predictions and residuals. Then we create a Spread-Location plot to see if the residuals look identically distributed. Unfortunately, the plot is not good -- it suggests that this cannot be the case. Your task: explain why the S-L plot suggests this.
+
+```{r, echo = F}
+# Use cross validation to choose a spline model for gross.pow ~ budget.pow:
+CV.out = glm.cv.loop(movie.data, "gross.pow ~ ns(budget.pow, df=DF)", 1:15)
+# the minimum CV score is at 4 (you can look at CV.out to check if you want). Generate the model:
+model = lm(gross.pow ~ ns(budget.pow, df = 4), data = movie.data)
+# Use the model to compute predictions and residuals
+movies.augment = augment(model, data = movie.data)
+# Construct a Spread-Location plot to check if our assumptions are plausible:
+ggplot(data = movies.augment, mapping=aes(x = budget.pow, y = sqrt(abs(.resid)))) + geom_point() + geom_smooth() + labs(x = 'predicted', 'y = sqrt(abs(Residual))', title = 'S-L plot')
+```
+
+**ANSWER:** (explain why the S-L plot implies that our residuals are NOT identically distributed)
+In this case, when we use S-L plot to examine our residuals, we should try multiple times to see whether it fits or not. In this problem, the df is designed equals 4, we should use differnt dfs like df equals 2, 4, 8 to check whether it fits or not.
+
+
+**Question 2c.** Even though the S-L plot looked bad, suppose that we proceed anyway to construct the quantile regression. However, when we show the Quantile Regression for the power transformed variables, it is visually obvious that it must be wrong, even if we didn't look at the S-L plot beforehand. How can we tell?
+
+```{r, echo = F}
+qr = Pool.Residuals(movies.augment, x = "budget.pow")
+
+# the Quantile Regression plot for the power-transformed variables:
+ggplot(data = qr, mapping=aes(x = budget.pow, y = value, color = variable)) + 
+  geom_point(data = movies.augment, mapping=aes(x = budget.pow, y = gross.pow), color = 'black') + 
+  geom_line(size = 1) +
+  scale_color_brewer(palette = 'Set1', 
+                     limits = c('q5', 'q4', 'q3', 'q2', 'q1'), 
+                     labels = c('95%', '85%', '50%', '15%', '5%')) + 
+  labs(x = 'Budget^(1/4)', y='Revenue^(1/4)', 
+       color = 'Estimated \nQuantiles',
+       title = 'Quantile Regression, Transformed Budget vs Revenue')
+
+```
+
+**ANSWER:** (explain why we can visually tell that this quantile regression plot must be wrong)
+
+We can see from the plot that the distribution of observations in middle centered parts are not very balanced with two sides of distribution, which means that it is not perfectely randomly distributed. 
+In this case, the quantile regression plot must be wrong because in the last question, it is already shown that the SL plot does not show the residuals correctly. Now in the quantile regression plot, it still fits along with the model, which may not be correct.
+
+
+#### Part 3: What time do most crimes occur?
+
+In the `crimes.subset` data frame, there are the following columns
+
+1. `offense`: the type of crime -- theft, auto theft, burglary, and robbery
+2. `hour`: the hour that the crime occurred -- 0 (midnight) to 23 (11 PM)
+3. `month`: the month that the crime occurred. We have grouped the month into two categories: `jan-apr`, and `may-aug`
+
+**Question 3a.** Make a scatterplot (or line plot) showing the percentage of crimes committed each hour. 
+
+```{r}
+
+# group by hour
+counts <- ddply(crime.subset, c("hour"), summarize, 
+               n.offense = length(hour))
+
+# Calculate the percentage of offense/hour
+counts.1 <- ddply(counts, "hour", mutate, 'percent' = n.offense / 36578)
+
+# make scatter plot
+ggplot(data = counts.1, mapping = aes(y = percent, x = hour)) + geom_point() + geom_line()
+
+
+```
+
+
+
+**Question 3b.** Repeat the plot in Question 3a, but separately for each type of `offense`. In your each of your plots, show 
+include a reference curve using the pooled data, in order to facilitate comparisons. (Hint: you computed this reference curve in question 3a). Do the different types of crimes have different distributions for their time of occurence? How do they differ? 
+
+```{r}
+
+# group by hour and offense
+counts.2 <- ddply(crime.subset,c('offense','hour'), summarize, count = length(hour))
+counts.2 <- ddply(counts.2,'offense', mutate, percent.1 = count/sum(count))
+
+# pooled data
+counts.3 <- subset(counts.1, select = c('percent', 'hour'))
+
+# make scatter plot
+ggplot(data = counts.2, mapping = aes(x = hour, y = percent.1)) + 
+  geom_line() + geom_point() + geom_line(data = counts.1, mapping = aes(x = hour, y= percent), color = 'blue') + facet_wrap("offense")+labs(x = "time",y ="percent", title = "percentage within each crime type")
+
+```
+
+
+**ANSWER:** (How does the distribution the time of occurence differ for each type of crime?) We can see from the facet plots that in the blue line which is categorized by hour, in autotheft and theft, crimes by hours or categories are very similar. However, in category robbery, the crimes categorzied by hours or types are very different. Different types of crimes have different types of distribution in different times. Maybe this is due to different time period, some types of crimes are more likely to occur.
+
+
+**Question 3c.** Repeat the plot in Question 3b, but separately for each type of `offense` and `month` (i.e., use `facet_grid(offense ~ month)`). As before, include a reference curve using the pooled data, in order to facilitate comparisons. (You don't have to analyze the plot yet -- wait for part 3f)
+
+```{r}
+
+
+# group by month and offense
+counts.4 <- ddply(crime.subset,c('offense','hour','month'), summarize, count = length(hour))
+counts.4 <- ddply(counts.4,c('offense','month'), mutate, percent.2 = count/sum(count))
+
+# pooled data
+counts.3 <- subset(counts.1, select = c('percent', 'hour'))
+
+# make scatter plot
+ggplot(data = counts.4, mapping = aes(x = hour, y = percent.2)) + 
+  geom_line() + geom_point() + geom_line(data = counts.3, mapping = aes(x = hour, y= percent), color = 'blue') + facet_grid(offense~month)+labs(x = "time",y ="percent", title = "percentage within each crime type and month")
+
+
+
+```
+
+
+**Question 3d.** As an alternative, create a QQ plot comparing the distribution of `hour` for auto theft crimes occuring in `jan-apr` vs `may-aug`. Include the reference line `y=x`, as this is standard practice for QQ plots. Repeat this for the other 3 types of offense. You may use base graphics if you wish.
+
+```{r}
+# auto theft
+
+Find.QQ = function(data, col.name, pooled.data) {
+  # how many quantiles are we plotting?
+  n.pts = min( length(data[, col.name]), length(pooled.data))
+  # which quantiles are we plotting?
+  probs = seq(from = 0, to = 1, length.out = n.pts)
+  # compute these quantiles for each group
+  q1 = quantile(data[, col.name], probs= probs)
+  q2 = quantile(pooled.data, probs=probs )
+  # return them as a data frame
+  return( data.frame(group.data = q1, pooled.data = q2, quantile = probs))
+}
+
+# subset the data by month and auto theft
+many.QQplot <- ddply(crime.subset[crime.subset$offense == 'auto theft',],c('month'),Find.QQ,col.name = 'hour',pooled.data = crime.subset[crime.subset$offense == 'auto theft',]$hour)
+
+# QQ plot
+ggplot(data = many.QQplot, mapping = aes(x = pooled.data, y = group.data)) + 
+  geom_point() + facet_wrap('month')+labs(x = "time1",y ="time2", title = "QQ plot") + geom_abline()
+
+
+```
+```{r}
+
+# Robbery
+
+Find.QQ = function(data, col.name, pooled.data) {
+  # how many quantiles are we plotting?
+  n.pts = min( length(data[, col.name]), length(pooled.data))
+  # which quantiles are we plotting?
+  probs = seq(from = 0, to = 1, length.out = n.pts)
+  # compute these quantiles for each group
+  q1 = quantile(data[, col.name], probs= probs)
+  q2 = quantile(pooled.data, probs=probs )
+  # return them as a data frame
+  return( data.frame(group.data = q1, pooled.data = q2, quantile = probs))
+}
+
+# subset the data by month and auto theft
+many.QQplot <- ddply(crime.subset[crime.subset$offense == 'robbery',],c('month'),Find.QQ,col.name = 'hour',pooled.data = crime.subset[crime.subset$offense == 'robbery',]$hour)
+
+
+# QQ plot
+ggplot(data = many.QQplot, mapping = aes(x = pooled.data, y = group.data)) + 
+ geom_point() + facet_wrap('month')+labs(x = "time1",y ="time2", title = "QQ plot") + geom_abline()
+
+
+
+
+```
+```{r}
+# Burgary
+
+Find.QQ = function(data, col.name, pooled.data) {
+  # how many quantiles are we plotting?
+  n.pts = min( length(data[, col.name]), length(pooled.data))
+  # which quantiles are we plotting?
+  probs = seq(from = 0, to = 1, length.out = n.pts)
+  # compute these quantiles for each group
+  q1 = quantile(data[, col.name], probs= probs)
+  q2 = quantile(pooled.data, probs=probs )
+  # return them as a data frame
+  return( data.frame(group.data = q1, pooled.data = q2, quantile = probs))
+}
+
+# subset the data by month and auto theft
+many.QQplot <- ddply(crime.subset[crime.subset$offense == 'burglary',],c('month'),Find.QQ,col.name = 'hour',pooled.data = crime.subset[crime.subset$offense == 'burglary',]$hour)
+
+
+# QQ plot
+ggplot(data = many.QQplot, mapping = aes(x = pooled.data, y = group.data)) + 
+  geom_point() + facet_wrap('month')+labs(x = "time1",y ="time2", title = "QQ plot") + geom_abline()
+
+
+
+
+```
+```{r}
+
+# theft
+
+Find.QQ = function(data, col.name, pooled.data) {
+  # how many quantiles are we plotting?
+  n.pts = min( length(data[, col.name]), length(pooled.data))
+  # which quantiles are we plotting?
+  probs = seq(from = 0, to = 1, length.out = n.pts)
+  # compute these quantiles for each group
+  q1 = quantile(data[, col.name], probs= probs)
+  q2 = quantile(pooled.data, probs=probs )
+  # return them as a data frame
+  return( data.frame(group.data = q1, pooled.data = q2, quantile = probs))
+}
+
+# subset the data by month and auto theft
+many.QQplot <- ddply(crime.subset[crime.subset$offense == 'theft',],c('month'),Find.QQ,col.name = 'hour',pooled.data = crime.subset[crime.subset$offense == 'theft',]$hour)
+
+
+# QQ plot
+ggplot(data = many.QQplot, mapping = aes(x = pooled.data, y = group.data)) + 
+ geom_point() + facet_wrap('month')+labs(x = "time1",y ="time2", title = "QQ plot") + geom_abline()
+
+
+
+
+```
+
+
+
+
+**Question 3e.** Between the plots you made in Question 3d and Question 3e, which one is better? Or should we keep both? Why? 
+
+
+**ANSWER:** 
+I think plots in 3c, 3d, 3e all perform the distrbution of time, crimes and month from different emphasizes and perspectives. In 3c and 3d, we use facet to combine all types of crimes in one plot, which are good for us to compare different crime types occurred in different time periods. In 3d, we use QQpplot seperately to see different types of crimes happend in different month periods. But generally speaking, QQ plot is more obivious for us to see the distibution, especially when we add a y=x line. Since we can detect differences more easily from straight lines rather than curve lines.
+
+
+**Question 3g.** How does the distribution of the time of occurence vary by month? Answer separately for each type of crime.
+
+**ANSWER:** 
+We can see from the seperate QQ plots that for auto theft, the distribution happend in jan-April or May-Agust are very similar. It seems that there are more crimes in jan-Apr. For Robbery, there are more cases in jan-april than May-August. For Burglary, there are more crimes happend between may and august. For theft, there are more crimes happend bewtween jan to april.
+
+
+
+#### Part 4: Create your own visualization
+
+**Question 4.** Using either `crime.subset`, `movie.data`, or `movie.genre.data` (which is in the file `movie_genre_data.rda`), create a plot showing something interesting about the data. Then discuss what the plot shows, and what the viewer should look when examining the plot. Be sure to label all axes, add a title, adjust for overplotting, etc..., so that it is clear what the plot is trying to show. 
+
+Note 1: The plot should be one of the types that we discussed in class. 
+
+Note 2: Facets of course are allowed 
+
+```{r}
+# Subset the dataframe into two a new one just including year 1963, 1980, 1988, 1998, 2008,2014
+
+movies.1 <- movie.genre.data[which(movie.genre.data$Release.Year == '1963' |movie.genre.data$Release.Year == '1980' | movie.genre.data$Release.Year == '1988' |movie.genre.data$Release.Year == '1998' | movie.genre.data$Release.Year == '2008' |movie.genre.data$Release.Year == '2014'),]
+
+# Make a quantile plot
+ggplot(data = movies.1, mapping = aes(sample = Production.Budget)) + 
+  stat_qq(geom='point', distribution='qunif') + 
+  facet_wrap("Release.Year") + 
+  labs(x='Quantiles', y='Budget', 
+       title = 'Production.Budget (Grouped by Year)')
+
+
+```
+ANS: We can see from the quantile plots that with the increase of year, the investment in production budget is larger and larger. Especially, in 1963, it seems that people did not put much money in making movies, but 20 years later, more and more money are invested to make movies. When step into 1990s and 2000s, there is a sudden and obvious increase in production budget, which means that movies have become a very important part of people's life.
+

@@ -1,0 +1,183 @@
+---
+title: "95-868 Homework 3"
+author: "Weixuan Sun"
+output: html_document
+---
+
+#### Instructions 
+
+Submit this Rmd file on blackboard. Don't submit additional files.
+
+Code should be clearly commented. Plots should be presentable and properly sized/labeled/titled. Mitigate overplotting whenever necessary.
+
+#### Preliminaries
+
+Here are some libraries that you may need.
+```{r}
+library(ggplot2)
+library(plyr)
+library(reshape2)
+library(knitr)
+library(binom) 
+library(purrr)
+library(tidyverse)
+```
+
+We will use the data frame `county.data`, which is in the data file `hw3_data.rda`. (Make sure `hw3_data.rda` is in the same directory as this markdown file!)
+
+```{r}
+load('hw3_data.rda')
+```
+
+Finally, here is the function `Find.p` that we used in lecture 6 to compute p-values against a null hypothesis for binomially distributed data
+
+```{r}
+# Find.p.value: Finds the p-value of a binomial test
+Find.p = function(x, n, p){
+  test.result = binom.test(x=x, n=n, p = p, alternative = 'greater')
+  return(test.result$p.value) # we can return one thing
+}
+```
+
+#### Questions 
+
+**Problem 1:** 
+
+Using `county.data`, make a scatterplot of the per capita violent crime rates for each county as function of the population. Does this plot resemble those for deaths, births, or infant deaths that we saw in the notes? If not, what is the biggest difference?
+
+Note: you may want to use a log transform on the x-axis to see the data more clearly.
+
+```{r fig.width=6, fig.height=4, dpi=80, fig.align='center'}
+
+# compute a CI for the vilolent crime rate
+CI.data <- with(county.data, 
+               binom.confint(x = violent.crimes, n = population, methods = 'exact'))
+
+# add the results to the data frame
+county.augment <- with(CI.data, 
+    mutate(county.data, 
+    lower.CI = lower, upper.CI = upper, per.capita = mean))
+county.augment
+
+# make scatterplot
+ggplot(county.augment, aes(x = log(population), y = per.capita)) + geom_point()
+
+```
+
+ANS: We can see from the lecture notes and plot above that it does not very assemble those for births, deaths and infant deaths. For the deaths plot, most deaths are between 0.005 and 0.015 per capita rate, with outliers above 0.03. For the infant deaths plot, most infant deaths are between 0 and 0.0005, with outliers above 0.002. But in this plot, there are more outliers for violent crimes happened even above 0.020 per capita rate. Overall speaking, the violent crimes mainly happen between 0 and 0.01 per capita rate. 
+
+**Problem 2:**
+
+Suppose that you supervisor asks you use `county.data` to prepare a list of counties in the US where crime is an extremely serious problem.
+
+To do this, you decide to model the number of violent crimes in each county as a `Bernoulli(n,p)` random variable, where `n` is the county population and `p` is the unknown underlying crime risk that each person faces.
+
+You decide to return a list of counties for which the evidence is strongest that their underlying crime risk (the `p` parameter) is greater than 1.5 percent. 
+
+How many counties should you include in the list? You decide that the list should have a 10 percent family wise error rate -- you are willing to have a slightly higher chance of error than typically assumed.
+
+Create this list. Show the county name, population, number of violent crimes, per capita rate, and the number of standardized residuals above your null of `p=0.015`.
+
+```{r fig.width=8, fig.height=6, dpi=100, fig.align='center'}
+
+# compute the p-values under the null that p = 0.015
+county.augment <- mutate(county.augment, 
+                          p.val = purrr::map2_dbl(violent.crimes, population, Find.p, 
+                                           p = 0.015))
+
+
+# how many counties are returned under a 10% familywise error probability?
+cutoff = 0.10/3072
+sum(county.augment$p.val <= cutoff)
+
+
+# subset dataframe that p value is greater than p = 0.015
+county.subset <- subset(county.augment, p.val < cutoff)
+county.subset
+
+kable(county.subset[c("name", "population", "violent.crimes", "per.capita", "p.val", "lower.CI", "upper.CI")])
+
+```
+
+
+**Problem 3:**
+
+Use Bonferoni-corrected 95% confidence intervals to visualize the underlying crime risk for the counties in `county.data`. 
+
+Create a plot showing the confidence intervals for the 1000 counties with the highest values for the lower bound of the confidence intervals. Also add a reference line to show the overall US per capita violent crime rate.
+
+You don't have to show the county names, just their confidence intervals.
+
+```{r fig.width=8, fig.height=6, dpi=100, fig.align='center'}
+
+# compute a bonf. CI for the violent crimes rate
+conf.level <- 1 - 0.05/3072
+bonf.CI.data <- with(county.augment,
+               binom.confint(x = violent.crimes, n = population, 
+                             methods = 'exact', conf.level = conf.level))
+
+# add the results to the dataframe
+county.augment <- with(bonf.CI.data, 
+    mutate(county.augment, 
+    bonf.lower.CI = lower, bonf.upper.CI = upper))
+
+# Plot the 1000 hightes records
+county.augment <- arrange(county.augment, desc(bonf.lower.CI))
+ggplot(data = county.augment[1:1000,], mapping=aes(x = 1:1000, y = per.capita, ymin = bonf.lower.CI, ymax = bonf.upper.CI)) +
+  geom_point() + 
+  geom_errorbar() + 
+  geom_hline(yintercept=0.0045, color = 'darkblue') + 
+  annotate(geom = 'text', x = Inf, y = 0.008, label = 'US overall rate', 
+           hjust=1, vjust=1.2, color='darkblue') + 
+  coord_cartesian(ylim = c(0, 0.035)) +
+  labs(title = '95% Bonferoni CI, violent crime rate, top 1000 counties') 
+
+
+
+
+```
+
+**Problem 4:**
+
+Redo the plot from problem 3, but only show the 20 counties with the highest lower bounds. This time, include the county names. Again, add a reference line to show the overall US per capita violent crime rate. Adjust the y-axis scale so that the plot is easily comparaed with the previous plot from problem 3.
+
+```{r fig.width=8, fig.height=6, dpi=100, fig.align='center'}
+
+# compute a bonf. CI for the violent crimes rate
+conf.level <- 1 - 0.05/3072
+bonf.CI.data <- with(county.augment,
+               binom.confint(x = violent.crimes, n = population, 
+                             methods = 'exact', conf.level = conf.level))
+
+# add the results to the dataframe
+county.augment <- with(bonf.CI.data, 
+    mutate(county.augment, 
+    bonf.lower.CI = lower, bonf.upper.CI = upper))
+
+# Plot the 20 hightes records
+county.augment <- arrange(county.augment, desc(bonf.lower.CI))
+ggplot(data = county.augment[1:20,], mapping=aes(x = 1:20, y = per.capita, ymin = bonf.lower.CI, ymax = bonf.upper.CI)) +
+  geom_point() + 
+  geom_errorbar() + 
+  geom_hline(yintercept=0.0045, color = 'darkblue') + 
+  annotate(geom = 'text', x = Inf, y = 0.008, label = 'US overall rate', 
+           hjust=1, vjust=1.2, color='darkblue') + 
+  coord_cartesian(ylim = c(0, 0.035)) +
+  labs(title = '95% Bonferoni CI, violent crime rate, top 20 counties') +
+  theme(text = element_text(size = 10),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+# Plot the 30 hightes records (same as hints)
+county.augment <- arrange(county.augment, desc(bonf.lower.CI))
+ggplot(data = county.augment[1:30,], mapping=aes(x = 1:30, y = per.capita, ymin = bonf.lower.CI, ymax = bonf.upper.CI)) +
+  geom_point() + 
+  geom_errorbar() + 
+  geom_hline(yintercept=0.0045, color = 'darkblue') + 
+  annotate(geom = 'text', x = Inf, y = 0.008, label = 'US overall rate', 
+           hjust=1, vjust=1.2, color='darkblue') + 
+  coord_cartesian(ylim = c(0, 0.035)) +
+  labs(title = '95% Bonferoni CI, violent crime rate, top 30 counties') +
+  theme(text = element_text(size = 10),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+```
